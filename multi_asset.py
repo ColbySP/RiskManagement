@@ -46,6 +46,7 @@ class GenGauss:
         return stats.gennorm.rvs(self.beta, self.loc, self.scale, size=n)
 
     def plot(self):
+        # instantiate and populate plot
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1)
         x = np.linspace(min(self.returns), max(self.returns), 100)
@@ -120,7 +121,7 @@ class Portfolio:
         if method not in ['risk', 'reward', 'Risk', 'Reward', 'sharpe', 'Sharpe']:
             raise ValueError(f'{method} is not a valid optimization method')
         cons = ({'type': 'eq', 'fun': lambda x: 1 - sum(x)})
-        bnds = tuple((0, 1) for _ in self.weights)
+        bnds = tuple((0, 1) for _ in self.weights)  # change tuple to set lower and upper bounds for allocation
         res = minimize(self.utility, self.weights, args=(target, method), constraints=cons, bounds=bnds)
         return np.round(res.x, 3)
 
@@ -129,6 +130,9 @@ class Portfolio:
             r = self.rand(10_000)
         else:
             r = self.returns
+
+        # create a new figure for the visualization
+        plt.figure()
 
         # plot individual assets
         assets_x, assets_y = np.std(r, axis=0) * sqrt(252), (np.mean(r, axis=0) + 1) ** 252 - 1
@@ -162,7 +166,6 @@ class Portfolio:
         plt.title('Efficient Frontier (Simulated Returns)' if sim else 'Efficient Frontier')
         plt.legend()
         plt.tight_layout()
-        plt.figure()
 
     def get_frontier(self, r_min, r_max):
         # make an array of target returns to scan through
@@ -175,35 +178,79 @@ class Portfolio:
             w = self.optimize(target=target, method='reward')
             weights[:, index] = w
 
+        # instantiate the first plot
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+
         # plot the allocation of the portfolio at each point
         for i in range(weights.shape[0]):
-            plt.plot(targets, weights[i, :], label=self.tickers[i])  # run a regression for slope of weight value
-        plt.title('Allocation Of Portfolio vs. Expected Return')
-        plt.xlabel("Expected Return (%)")
-        plt.ylabel("Percentage Of Portfolio (%)")
-        plt.legend()
-        plt.tight_layout()
-        plt.figure()
+            ax.plot(targets, weights[i, :], label=self.tickers[i])  # run a regression for slope of weight value
+        ax.set_title('Allocation Of Portfolio vs. Expected Return')
+        ax.set_xlabel("Expected Return (%)")
+        ax.set_ylabel("Percentage Of Portfolio (%)")
+        ax.legend()
+        fig.tight_layout()
+
+        # instantiate the second plot
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
 
         # display the weights on the efficient frontier plot to check their accuracy
         ret = np.dot(self.returns, weights)
         x = ret.std(ddof=1, axis=0) * sqrt(252)
         y = (ret.mean(axis=0) + 1) ** 252 - 1
-        plt.scatter(x, y, c='k', marker='x')
-        plt.xlabel('Standard Deviation of Returns (%)')
-        plt.ylabel('Expected Return (%)')
-        plt.title('Portfolios On The Efficient Frontier')
-        plt.tight_layout()
-        plt.figure()
+        ax.scatter(x, y, c='k', marker='x')
+        ax.set_xlabel('Standard Deviation of Returns (%)')
+        ax.set_ylabel('Expected Return (%)')
+        ax.set_title('Portfolios On The Efficient Frontier')
+        fig.tight_layout()
         return x, y
 
-    def evaluate(self, w, sim=False, size=100_000):
+    def evaluate(self, w, sim=False, size=100_000, n=1, port_val=10_000):
         if sim:
-            r = self.rand(size)
+            ret = np.zeros(shape=(size, n + 1))
+            ret[:, 0] = 0
+            for i in range(1, n+1):
+                r = self.rand(size)
+                ret[:, i] = np.dot(r, w)
+
+            # generate paths of stocks
+            rets = np.cumprod(ret + 1, axis=1)
+
+            # calculate percentiles of overall returns
+            lower = np.percentile(rets[:, -1], 0.5) - 1  # 99% Confidence Interval
+            mid = np.percentile(rets[:, -1], 50) - 1
+            upper = np.percentile(rets[:, -1], 99.5) - 1  # 99% Confidence Interval
+            lower_str = f'Lower Bound: ${round(port_val + lower * port_val, 2):,} ({lower * 100:.2f}%)'
+            mid_str = f'Expected Value: ${round(port_val + mid * port_val, 2):,} ({mid * 100:.2f}%)'
+            upper_str = f'Upper Bound: ${round(port_val + upper * port_val, 2):,} ({upper * 100:.2f}%)'
+
+            # instantiate the plot
+            fig = plt.figure()
+            ax = fig.add_subplot(1, 1, 1)
+
+            # plot a random sample of 500 walks
+            ind = np.random.choice(len(rets), 500, replace=False)
+            ax.plot(rets[ind].T * port_val, c='dimgray')
+            ax.scatter(0, port_val, label=upper_str, alpha=0)
+            ax.scatter(0, port_val, label=mid_str, alpha=0)
+            ax.scatter(0, port_val, label=lower_str, alpha=0)
+            ax.set_title("Hypothetical Portfolio Value Paths")
+            ax.set_xlabel('Number Of Trading Days (#)')
+            ax.set_ylabel('Portfolio Value ($)')
+            ax.legend()
+            fig.tight_layout()
+
+            # return annualized return and risk for the simulated portfolio
+            return round(rets[:, -1].mean() ** (252/n) - 1, 4), round(((rets[:, -1] - 1).std(ddof=1)) * sqrt(252/n), 4)
+
         else:
+            # calculate daily portfolio returns given historical data
             r = self.returns
-        ret = np.dot(r, w)
-        return round((ret.mean() + 1) ** 252 - 1, 4), round(ret.std(ddof=1) * sqrt(252), 4)
+            ret = np.dot(r, w)
+
+            # return annualized return and risk for the real portfolio
+            return round((ret.mean() + 1) ** 252 - 1, 4), round(ret.std(ddof=1) * sqrt(252), 4)
 
     def drift_evaluate(self, w):
         # define initial portfolio value
@@ -235,22 +282,26 @@ class Portfolio:
             port_val = sum(updated_val)
             w = updated_val / port_val
 
-        plt.plot(w_arr, label=self.tickers)
-        plt.title('Drifting Asset Weights In A Non-Rebalanced Portfolio')
-        plt.xlabel('Trading Days (#)')
-        plt.ylabel('Portfolio Allocation (%)')
-        plt.legend()
-        plt.tight_layout()
-        plt.figure()
+        # instantiate and populate the first plot
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        ax.plot(w_arr, label=self.tickers)
+        ax.set_title('Drifting Asset Weights In A Non-Rebalanced Portfolio')
+        ax.set_xlabel('Trading Days (#)')
+        ax.set_ylabel('Portfolio Allocation (%)')
+        ax.legend()
+        fig.tight_layout()
 
-        plt.plot(port_val_arr, label='Non-Rebalanced Portfolio')
-        plt.plot(equal_port_val, label='Portfolio Rebalanced Daily')
-        plt.title('Comparison Of Rebalancing Frequencies')
-        plt.xlabel('Trading Days (#)')
-        plt.ylabel('Portfolio Value ($)')
-        plt.legend()
-        plt.tight_layout()
-        plt.figure()
+        # instantiate and populate the second plot
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        ax.plot(port_val_arr, label='Non-Rebalanced Portfolio')
+        ax.plot(equal_port_val, label='Portfolio Rebalanced Daily')
+        ax.set_title('Comparison Of Rebalancing Frequencies')
+        ax.set_xlabel('Trading Days (#)')
+        ax.set_ylabel('Portfolio Value ($)')
+        ax.legend()
+        fig.tight_layout()
 
         return w_arr, port_val_arr
 
@@ -269,7 +320,6 @@ class Portfolio:
         plot.ax_marg_y.set_ylim(-0.1, 0.1)
         plt.suptitle("Empirical Relation Of Daily Returns")
         plt.tight_layout()
-        plt.figure()
 
         # simulated data
         corr_samples = self.rand()
@@ -282,14 +332,13 @@ class Portfolio:
         plot.ax_marg_y.set_ylim(-0.1, 0.1)
         plt.suptitle("Correlated Sampling Of Daily Returns")
         plt.tight_layout()
-        plt.figure()
 
     def __str__(self):
         return pd.DataFrame(columns=self.tickers, data=self.data).tail().to_string()
 
 
 # load in stock price data
-tickers = 'AAPL AMD GOOG NKE'
+tickers = 'AAPL GOOG META AMD NKE'
 start = '2017-01-06'
 end = '2023-01-06'
 
@@ -300,14 +349,16 @@ df.dropna(axis=0, inplace=True)
 
 # create the portfolio object
 port = Portfolio(df)
-# port.plot('AAPL', 'GOOG')
+
+# show an example of the synthetic returns data
+port.plot('AAPL', 'GOOG')
 
 # optimize the portfolio for best sharpe
 w = port.optimize(target=0.30, method='sharpe')
 print(f'Weights: {dict(zip(port.tickers, w))}')
 
 # simulate the portfolio 10,000 times
-mu, sigma = port.evaluate(w, sim=True, size=10_000)
+mu, sigma = port.evaluate(w, sim=True, size=10_000, n=21, port_val=10_000)
 
 # print stats of optimal portfolio
 print(f'Expected Return: {mu * 100:.2f}%')
@@ -326,9 +377,8 @@ weighted_ret = np.dot(port_w, port.returns.T)
 weighted_u = (weighted_ret.mean(axis=1) + 1) ** 252 - 1
 weighted_sigma = weighted_ret.std(axis=1, ddof=1) * sqrt(252)
 
-print(weighted_ret.shape)
-
 # plot and format it nicely
+plt.figure()
 plt.plot(front_x, front_y, label='Efficient Frontier', c='k')
 plt.scatter(weighted_sigma, weighted_u, c=np.linspace(0, len(weighted_ret), len(weighted_ret)), cmap='magma', label='Portfolio Drift')
 plt.colorbar(location='right', label='Age Of Portfolio (Days)')
@@ -338,13 +388,3 @@ plt.title('Evolution Of A Drifting Portfolio')
 plt.legend()
 plt.tight_layout()
 plt.show()
-
-"""
-Things that I want to do:
-1. Make it so you can color code the efficient frontier using different methods
-    currently it uses only sharpe but I could also use the asymmetric risk profiles
-2. Make it so the x-axis is downside deviation and optimize to avoid downside risk
-    This would likely have additional consequences but those could get sorted out
-3. Investigate the patterns in the correlation coefficients and see how we can get an
-    understanding of how to model a highly correlated environment versus an uncorrelated one
-"""
