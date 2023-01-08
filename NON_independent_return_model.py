@@ -145,9 +145,9 @@ def simulate(stock_dist, n_days, n_times, plot=None):
 
 
 projection_dist = simulate(stock_dist=model, n_days=21, n_times=10_000, plot=100)
-lower = np.percentile(projection_dist, 1)
+lower = np.percentile(projection_dist, 0.5)
 mid = np.percentile(projection_dist, 50)
-upper = np.percentile(projection_dist, 99)
+upper = np.percentile(projection_dist, 99.5)
 print(f'1st Percentile Price Projection: {lower:.2f} ({((lower / model.prices[-1]) - 1) * 100:.2f}%)')
 print(f'50th Percentile Price Projection: {mid:.2f} ({((mid / model.prices[-1]) - 1) * 100:.2f}%)')
 print(f'99th Percentile Price Projection: {upper:.2f} ({((upper / model.prices[-1]) - 1) * 100:.2f}%)')
